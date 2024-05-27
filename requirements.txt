@@ -1,0 +1,7 @@
+pandas
+google-api-python-client
+streamlit
+pandas
+sqlalchemy
+psycopg2
+pymongo
