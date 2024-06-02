@@ -1,10 +1,12 @@
+from datetime import timedelta
 from googleapiclient.discovery import build
 import pymongo
 import psycopg2
 import pandas as pd
 import streamlit as st
-from db import connect_database
+# from db import connect_database
 import logging
+import re
 
 #-------------- API CONNECTION --------------------
 def connect_youtube_api():
@@ -14,7 +16,18 @@ def connect_youtube_api():
     youtube = build(api_service_name, api_version, developerKey = api_key)
     return youtube
 
-
+def connect_database():
+    try:
+        return psycopg2.connect(
+            host="localhost",
+            user="postgres",
+            password="admin",
+            dbname="youtube_data_new",
+            port=5432
+        )
+    except psycopg2.Error as err:
+        print(f"Error: {err}")
+        return None
 
 youtube = connect_youtube_api()
 
@@ -190,18 +203,15 @@ def gather_all_details(channel_id):
     return "channel details uploaded"
     
 
-def channels_table():
+def channels_table(channel_name_single):
     mydb = connect_database()
     if mydb is None:
         return
 
     cursor = mydb.cursor()
-    drop_query = '''drop table if exists channel'''
-    cursor.execute(drop_query)
-    mydb.commit()
-
-    try:
-        create_table_channel = '''
+    
+ 
+    create_table_channel = '''
                     CREATE TABLE IF NOT EXISTS channel(
                         channel_id VARCHAR(255) PRIMARY KEY,
                         channel_name VARCHAR(255),
@@ -211,25 +221,24 @@ def channels_table():
                         playlist_id VARCHAR(255)
                     )
                     '''
-        cursor.execute(create_table_channel)
-        mydb.commit()
-    except:
-        print("Channels table already created")
+    cursor.execute(create_table_channel)
+    mydb.commit()
+    
 
-    ch_list = []
+    single_channel_detail=[]
     db = client["Youtube_data"]
     collection = db["channel_details"]
 
-  
-    for c in collection.find({}, {"_id": 0, "channel_information": 1}):
+    for c in collection.find({"channel_information.channel_name":channel_name_single}, {"_id": 0}):
         if isinstance(c["channel_information"], list):
-            ch_list.extend(c["channel_information"])
+            single_channel_detail.extend(c["channel_information"])
         else:
-            ch_list.append(c["channel_information"])
+            single_channel_detail.append(c["channel_information"])
+
+    df_single_channel_detail = pd.DataFrame(single_channel_detail)
+
     
-    df = pd.DataFrame(ch_list)
-    
-    for index, row in df.iterrows():
+    for index, row in df_single_channel_detail.iterrows():
         insert_query = '''INSERT INTO channel(channel_id, channel_name, channel_views, channel_description,total_videos,playlist_id) 
                         VALUES (%s, %s, %s, %s,%s,%s)'''
 
@@ -244,16 +253,13 @@ def channels_table():
             except Exception as e:
                 print("Channel values are already inserted")
 
-def comments_table():
+def comments_table(channel_name_single):
     mydb = connect_database()
     if mydb is None:
         return
 
     cursor = mydb.cursor()
 
-    drop_query = '''drop table if exists comments'''
-    cursor.execute(drop_query)
-    mydb.commit()
 
     try:
         create_table_comment ='''
@@ -272,17 +278,22 @@ def comments_table():
     except Exception as e:
         print("COMMENT table already created")
     
-    com_list = []
+    
+    single_comment_detail=[]
     db = client["Youtube_data"]
     collection = db["channel_details"]
 
-    for com in collection.find({}, {"_id": 0, "comment_details": 1}):
-        if 'comment_details' in com:
-            com_list.extend(com['comment_details'])
+    for c in collection.find({"channel_information.channel_name":channel_name_single}, {"_id": 0}):
+        if isinstance(c["channel_information"], list):
+            single_comment_detail.extend(c["comment_details"])
+        else:
+            single_comment_detail.append(c["channel_information"])
+
+    df_single_comment_detail = pd.DataFrame(single_comment_detail)
 
 
-    df = pd.DataFrame(com_list)
-    for idx, row in df.iterrows():
+    
+    for idx, row in df_single_comment_detail.iterrows():
         insert_query = '''INSERT INTO comments(comment_id,comment_text, comment_author, comment_published_at,video_id) 
                         VALUES (%s, %s, %s,%s,%s)'''
 
@@ -310,116 +321,114 @@ def iso8601_duration_to_seconds(duration_str):
     if match:
         duration_parts = match.groupdict()
         duration_parts = {key: int(value) for key, value in duration_parts.items() if value}
-        return timedelta(**duration_parts).total_seconds()
+        return int(timedelta(**duration_parts).total_seconds())
     elif duration_str == "P0D":
         return 0  # Duration is zero days
     else:
         return None  
 
-def videos_table():
-   
-        mydb = connect_database()
-        if mydb is None:
-            print("Failed to connect to the database")
-            return
-
-        print("Connected to the database")
-
-        
-        cursor = mydb.cursor()
-        drop_query = '''drop table if exists videos'''
-        cursor.execute(drop_query)
-        mydb.commit()
-
-
-        print("Dropped existing videos table")
-
-        create_table_video ='''
-            CREATE TABLE IF NOT EXISTS videos(
-                video_id VARCHAR(255) PRIMARY KEY,
-                channel_id VARCHAR(255),
-                video_name VARCHAR(255),
-                video_description TEXT,
-                tags TEXT,
-                published_at TIMESTAMP,
-                view_count INTEGER,
-                like_count INTEGER,
-                favorite_count INTEGER,
-                comment_count INTEGER,
-                duration INTEGER,
-                thumbnail VARCHAR(255),
-                caption_status VARCHAR(255)
-            )
-        '''
-        cursor.execute(create_table_video)
-        mydb.commit()
-
-        print("Videos table created successfully")
-        v_list = []
-        db = client["Youtube_data"]
-        collection = db["channel_details"]
-
-        for v in collection.find({}, {"_id": 0, "video_details": 1}):
-            if 'video_details' in v:
-                v_list.extend(v['video_details'])
-        df = pd.DataFrame(v_list)
-                # Insert data into the videos table
-        
-        insert_query = """INSERT INTO videos(video_id, channel_id, video_name, video_description,
-                            tags, published_at, view_count, like_count, favorite_count, comment_count, 
-                            duration, thumbnail, caption_status) 
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
-            
-        conn = connect_database()
-        if conn:
-            try:
-                cur = conn.cursor()
-                for idx, row in df.iterrows():
-                    duration_seconds = iso8601_duration_to_seconds(row["duration"])
-                    if duration_seconds is None:
-                        print(f"Invalid duration string at index {idx}: {row['duration']}")
-                        continue 
-                    values = (
-                        row["video_id"],
-                        row["channel_id"],
-                        row["video_name"],
-                        row["video_description"],
-                        row["tags"],
-                        row["published_at"],
-                        row["view_count"],
-                        row["like_count"],
-                        row["favorite_count"],
-                        row["comment_count"],
-                        duration_seconds,
-                        row["thumbnail"],
-                        row["caption_status"]
-                    )
-                    try:
-                        cur.execute(insert_query, values)
-                    except Exception as e:
-                        print(f"Error inserting data at index {idx}: {e}")
-                        conn.rollback()  # Rollback the transaction on error
-                    else:
-                        conn.commit()  # Commit the transaction
-                print("All videos inserted successfully!")
-            except Exception as e:
-                print(f"Error with database operation: {e}")
-            finally:
-                cur.close()
-        else:
-            print("Failed to connect to the database")
-
-def playlists_table():
+def videos_table(channel_name_single):
     mydb = connect_database()
     if mydb is None:
+        print("Failed to connect to the database")
         return
 
-    cursor = mydb.cursor()
-    drop_query = '''drop table if exists playlists'''
-    cursor.execute(drop_query)
-    mydb.commit()
+    print("Connected to the database")
 
-    try:
+    cursor = mydb.cursor()
+
+    # Create videos table if it doesn't exist
+    create_table_video = '''
+        CREATE TABLE IF NOT EXISTS videos(
+            video_id VARCHAR(255) PRIMARY KEY,
+            channel_id VARCHAR(255),
+            video_name VARCHAR(255),
+            video_description TEXT,
+            tags TEXT,
+            published_at TIMESTAMP,
+            view_count INTEGER,
+            like_count INTEGER,
+            favorite_count INTEGER,
+            comment_count INTEGER,
+            duration INTEGER,
+            thumbnail VARCHAR(255),
+            caption_status VARCHAR(255)
+        )
+    '''
+    cursor.execute(create_table_video)
+    mydb.commit()
+    print("Videos table created successfully")
+
+    # Connect to MongoDB and fetch data
+    
+
+    single_video_list = []
+    db = client["Youtube_data"]
+    collection = db["channel_details"]
+
+    # Flatten the list of lists to a list of dictionaries
+    for c in collection.find({"channel_information.channel_name":channel_name_single}, {"_id": 0}):
+        if isinstance(c["video_details"], list):
+            single_video_list.extend(c["video_details"])
+        else:
+            single_video_list.append(c["video_details"])
+        
+    df_single_video_details = pd.DataFrame(single_video_list)
+    # Insert data into the videos table
+    insert_query = """INSERT INTO videos(video_id, channel_id, video_name, video_description,
+                        tags, published_at, view_count, like_count, favorite_count, comment_count, 
+                        duration, thumbnail, caption_status) 
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+            
+    conn = connect_database()
+    if conn:
+        try:
+            cur = conn.cursor()
+            for idx, row in df_single_video_details.iterrows():
+                duration_seconds = iso8601_duration_to_seconds(row["duration"])
+                if duration_seconds is None:
+                    print(f"Invalid duration string at index {idx}: {row['duration']}")
+                    continue 
+                values = (
+                    row["video_id"],
+                    row["channel_id"],
+                    row["video_name"],
+                    row["video_description"],
+                    row["tags"],
+                    row["published_at"],
+                    row["view_count"],
+                    row["like_count"],
+                    row["favorite_count"],
+                    row["comment_count"],
+                    duration_seconds,
+                    row["thumbnail"],
+                    row["caption_status"]
+                )
+                try:
+                    cur.execute(insert_query, values)
+                except Exception as e:
+                    print(f"Error inserting data at index {idx}: {e}")
+                    conn.rollback()  # Rollback the transaction on error
+                else:
+                    conn.commit()  # Commit the transaction
+            print("All videos inserted successfully!")
+        except Exception as e:
+            print(f"Error with database operation: {e}")
+        finally:
+            cur.close()
+            conn.close()
+    else:
+        print("Failed to connect to the database")
+
+def playlists_table(channel_name_single):
+        mydb = connect_database()
+        if mydb is None:
+            return
+
+        cursor = mydb.cursor()
+        
+
+        
         create_table_playlists = '''
                     CREATE TABLE IF NOT EXISTS playlists(
                         playlist_id VARCHAR(255) PRIMARY KEY,
@@ -432,46 +441,46 @@ def playlists_table():
                     '''
         cursor.execute(create_table_playlists)
         mydb.commit()
-       
-    except Exception as e:
-        print("playlists table already exists")
-
-    p_list = []
-    db = client["Youtube_data"]
-    collection = db["channel_details"]
-
-    # Flatten the list of lists to a list of dictionaries
-    for c in collection.find({}, {"_id": 0, "playlist_information": 1}):
-        if isinstance(c["playlist_information"], list):
-            p_list.extend(c["playlist_information"])
-        else:
-            p_list.append(c["playlist_information"])
         
-    df = pd.DataFrame(p_list)
-    for idx, row in df.iterrows():
-        insert_query = '''INSERT INTO playlists(playlist_id, title, channel_id,channel_name,published_at,video_count) 
-                        VALUES (%s, %s, %s,%s,%s,%s)'''
+       
 
-        values = (row['playlist_id'], row['title'], row['channel_id'],row["channel_name"],row["published_at"],row["video_count"])
-        conn = connect_database()  
-        if conn:
-            try:
-                cur = conn.cursor()
-                cur.execute(insert_query, values)
-                conn.commit()
-                print("Playlists Queries inserted successfully!")
-            except Exception as e:
-                print("Error inserting data:", e)
-            finally:
-                if cur:
-                    cur.close()
-                conn.close()
+        single_playlist_list = []
+        db = client["Youtube_data"]
+        collection = db["channel_details"]
 
-def tables():
-   channels_table()
-   playlists_table()
-   videos_table()
-   comments_table()
+        # Flatten the list of lists to a list of dictionaries
+        for c in collection.find({"channel_information.channel_name":channel_name_single}, {"_id": 0}):
+            if isinstance(c["playlist_information"], list):
+                single_playlist_list.extend(c["playlist_information"])
+            else:
+                single_playlist_list.append(c["playlist_information"])
+            
+        df_single_playlist_details = pd.DataFrame(single_playlist_list)
+        
+        for idx, row in df_single_playlist_details.iterrows():
+            insert_query = '''INSERT INTO playlists(playlist_id, title, channel_id,channel_name,published_at,video_count) 
+                            VALUES (%s, %s, %s,%s,%s,%s)'''
+
+            values = (row['playlist_id'], row['title'], row['channel_id'],row["channel_name"],row["published_at"],row["video_count"])
+            conn = connect_database()  
+            if conn:
+                try:
+                    cur = conn.cursor()
+                    cur.execute(insert_query, values)
+                    conn.commit()
+                    print("Playlists Queries inserted successfully!")
+                except Exception as e:
+                    print("Error inserting data:", e)
+                finally:
+                    if cur:
+                        cur.close()
+                    conn.close()
+
+def tables(single_channel):
+   channels_table(single_channel)
+   playlists_table(single_channel)
+   comments_table(single_channel)
+   videos_table(single_channel)
 
    return "tables created successfully"
 
@@ -552,27 +561,63 @@ st.sidebar.title(":red[YOUTUBE DATA HARVESTING AND WAREHOUSING]")
 st.image(r"C:\Users\swarn\Downloads\youtube.jpg", use_column_width=True)
 
 selected_action = st.sidebar.selectbox("Select Action",
-                                       ["Collect and Store Data", 
-                                        "Migrate to SQL", 
+                                       ["Collect,Store and Migrate Data", 
                                         "Show Channels", 
                                         "Show Playlists", 
                                         "Show Videos", 
                                         "Show Comments",
                                         "Question and Answer"])
 
-if selected_action == "Collect and Store Data":
-    st.title("Collect and Store Data")
-    channel_id = st.text_input("Enter the channel ID:")
-    if st.button("Collect and Store Data"):
-        result = collect_and_store_data(channel_id)
-        st.success(result)
+if selected_action == "Collect,Store and Migrate Data":
+    st.title("Collect, Store and Migrate Data")
+    
+    channel_id=st.text_input("Enter the channel ID")
+    if st.button("collect and store data"):
+        ch_ids = []
+        db = client["Youtube_data"]
+        coll1 = db["channel_details"]
+       
 
-elif selected_action == "Migrate to SQL":
-    st.title("Migrate to SQL")
+        for ch_data in coll1.find({}, {"_id": 0, "channel_information": 1}):
+            if 'channel_information' in ch_data:
+                if isinstance(ch_data['channel_information'], dict):
+                    ch_ids.append(ch_data['channel_information']['channel_id'])
+                elif isinstance(ch_data['channel_information'], list):
+                    for info in ch_data['channel_information']:
+                        if 'channel_id' in info:
+                            ch_ids.append(info['channel_id'])
+
+
+        if channel_id in ch_ids:
+            st.success("Channel Details of the given channel id already exists")
+
+        else:
+            insert=gather_all_details(channel_id)
+            st.success(insert)
+    
+    
+    placeholder = st.empty()
+    refresh_button = placeholder.button("Refresh")
+
+    if refresh_button:
+        # Rerun the script by raising an exception
+        raise st.ScriptRunner.StopException
+    
+    ch_list = []
+    coll1 = db["channel_details"]
+    for c in coll1.find({}, {"_id": 0, "channel_information": 1}):
+        if 'channel_information' in c and isinstance(c['channel_information'], list):
+            for channel_info in c['channel_information']:
+                ch_list.append(channel_info["channel_name"])
+    
+    unique_channel = st.selectbox("Select the Channel", ch_list)
+
+
     if st.button("Migrate to SQL"):
-        result = migrate_to_sql()
-        st.success(result)
+        Table = tables(unique_channel)
+        st.success(Table)
 
+       
 elif selected_action == "Show Channels":
     st.title("Show Channels")
     show_channel_table()
@@ -616,6 +661,7 @@ elif selected_action == "Question and Answer":
             cursor.execute(q1)
             mydb.commit()
             t1 = cursor.fetchall()
+            print("query_result",t1)
             df = pd.DataFrame(t1,columns = ["video_title","channel_name"])
             st.write(df)
 
