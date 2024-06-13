@@ -1,5 +1,7 @@
 ### **YOUTUBE DATA HARVESTING AND WAREHOUSING**
-      
+
+### **GitHub link** :  https://www.linkedin.com/pulse/youtube-data-harvesting-warehousing-swarnathara-r-7dfef
+
   YouTube Data Harvesting and Warehousing is a project designed to provide users with the ability to access and analyze data from numerous YouTube channels. Utilizing SQL, MongoDB, and Streamlit, the project delivers a user-friendly application that allows users to retrieve, save, and query YouTube channel and video data.
 
   The system is capable of harvesting and managing YouTube channel data, including channel details, video information, playlists, and comments. Data is collected using the YouTube Data API and stored in a MongoDB database. The application also supports migrating the data to a PostgreSQL database and offers various insights and queries through a Streamlit web interface.
@@ -44,3 +46,5 @@
   - Explore playlists and videos of a channel.
   - Analyze comments on videos.
   - Perform various queries to gain insights, such as identifying the most viewed videos or channels with the most content.
+
+
